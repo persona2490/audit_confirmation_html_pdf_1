@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+
+# Streamlit
+.streamlit/
+
+# Build
+build/
+dist/
+
+# PyInstaller
+*.spec
+
+# VSCode
+.vscode/
+
+# Temporary
+*.log
