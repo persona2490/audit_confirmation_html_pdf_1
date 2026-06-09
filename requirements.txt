@@ -3,4 +3,3 @@ pandas
 openpyxl
 jinja2
 weasyprint
-playwright
