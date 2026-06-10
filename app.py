@@ -9,6 +9,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from playwright.sync_api import sync_playwright
 import streamlit.components.v1 as components
 import os
+from openai import OpenAI
 
 REQUIRED_COLUMNS = ["账户名称", "银行账号", "开户行", "币种", "账户类型", "余额"]
 
@@ -107,6 +108,45 @@ def safe_filename(text):
         text = text.replace(ch, "_")
     return text[:80]
 
+def call_deepseek_ai(account_data, risk_data):
+    client = OpenAI(
+        api_key=st.secrets["DEEPSEEK_API_KEY"],
+        base_url="https://api.deepseek.com"
+    )
+
+    prompt = f"""
+你是一名审计经理，请根据以下银行账户信息和规则检查结果，生成审计风险分析。
+
+【账户信息】
+{account_data}
+
+【规则检查结果】
+{risk_data}
+
+请输出：
+1. 总体风险等级
+2. 主要风险点
+3. 审计关注事项
+4. 处理建议
+
+要求：
+- 面向审计人员
+- 不要编造不存在的信息
+- 语言简洁
+- 如果信息完整，也要说明仍需人工复核
+"""
+
+    response = client.chat.completions.create(
+        model="deepseek-chat",
+        messages=[
+            {"role": "system", "content": "你是一名严谨的审计经理，擅长银行函证风险分析。"},
+            {"role": "user", "content": prompt}
+        ],
+        temperature=0.2
+    )
+
+    return response.choices[0].message.content
+
 
 st.set_page_config(page_title="智能银行询证函生成助手", layout="centered")
 
@@ -161,6 +201,17 @@ if not valid:
 
 st.success(f"Excel校验通过，共读取 {len(df)} 条账户记录。")
 st.dataframe(df.head(10), use_container_width=True)
+
+st.subheader("账户AI审计建议")
+
+account_data = df.head(20).to_json(orient="records", force_ascii=False)
+
+risk_data = "当前仅完成基础字段校验，未发现明显缺失字段。"
+
+if st.button("生成AI审计建议"):
+    with st.spinner("DeepSeek 正在分析账户信息..."):
+        ai_advice = call_deepseek_ai(account_data, risk_data)
+        st.markdown(ai_advice)
 
 st.subheader("第三步：预览询证函")
 
