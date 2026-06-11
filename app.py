@@ -13,6 +13,53 @@ from openai import OpenAI
 
 REQUIRED_COLUMNS = ["账户名称", "银行账号", "开户行", "币种", "账户类型", "余额"]
 
+AUDIT_RULES = """
+【保证金户】
+风险等级：高
+关注点：资金是否受限；是否对应真实合同、保函或承兑汇票；是否存在担保责任或潜在负债。
+审计程序：获取保证金协议；检查保函、承兑汇票或相关合同；核实资金受限性质；检查财务报表披露。
+
+【监管户】
+风险等级：高
+关注点：是否属于受限资金；是否存在违规支取；资金用途是否符合监管协议。
+审计程序：获取监管协议；执行银行函证；检查资金支取记录；核实资金用途。
+
+【资本金户】
+风险等级：高
+关注点：资金来源是否合法；外汇登记是否完整；资金用途是否合规。
+审计程序：检查投资协议、验资报告、外汇登记资料；执行银行函证；检查资金流向。
+
+【外币户】
+风险等级：中
+关注点：汇率折算是否正确；汇兑损益是否确认；是否存在异常跨境交易。
+审计程序：检查期末汇率；复核外币折算；检查跨境流水。
+
+【定期存款】
+风险等级：中高
+关注点：是否存在质押、冻结或受限；利息收入是否准确。
+审计程序：获取存单；检查质押协议；复核利息收入。
+
+【募集资金户】
+风险等级：高
+关注点：是否专款专用；资金用途是否合规；是否存在挪用。
+审计程序：检查募集资金专项报告；核对资金用途；检查审批文件。
+
+【贷款专户】
+风险等级：高
+关注点：借款合同是否完整；利息计提是否准确；资金用途是否符合约定。
+审计程序：检查借款合同；检查贷款流水；复核利息。
+
+【基本户】
+风险等级：低
+关注点：账户是否真实存在；余额是否与账面一致；是否存在未披露账户。
+审计程序：银行函证；对账单检查；资金流水抽查。
+
+【一般户】
+风险等级：中
+关注点：是否长期未使用；是否存在体外资金循环；是否纳入财务核算。
+审计程序：银行函证；核查账户用途；检查资金流水。
+"""
+
 def html_to_pdf(html_content, output_path):
     with sync_playwright() as p:
         browser = p.chromium.launch()
@@ -108,45 +155,51 @@ def safe_filename(text):
         text = text.replace(ch, "_")
     return text[:80]
 
-def call_deepseek_ai(account_data, risk_data):
+def call_deepseek_ai(account_info):
     client = OpenAI(
         api_key=st.secrets["DEEPSEEK_API_KEY"],
         base_url="https://api.deepseek.com"
     )
 
     prompt = f"""
-你是一名审计经理，请根据以下银行账户信息和规则检查结果，生成审计风险分析。
+你是一名银行函证审计专家。
+
+请根据以下审计规则库和账户信息，生成审计风险分析。
+
+【审计规则库】
+{AUDIT_RULES}
 
 【账户信息】
-{account_data}
-
-【规则检查结果】
-{risk_data}
-
-请输出：
-1. 总体风险等级
-2. 主要风险点
-3. 审计关注事项
-4. 处理建议
+{account_info}
 
 要求：
-- 面向审计人员
-- 不要编造不存在的信息
-- 语言简洁
-- 如果信息完整，也要说明仍需人工复核
+1. 先识别账户类型。
+2. 只分析与账户类型最匹配的规则。
+3. 不要把所有规则都总结一遍。
+4. 如果账户类型没有匹配规则，输出“知识库中无对应规则”。
+5. 语言面向审计人员，简洁专业。
+
+输出格式：
+
+## 风险等级
+
+## 风险分析
+
+## 需要关注的问题
+
+## 建议执行的审计程序
 """
 
     response = client.chat.completions.create(
         model="deepseek-chat",
         messages=[
-            {"role": "system", "content": "你是一名严谨的审计经理，擅长银行函证风险分析。"},
+            {"role": "system", "content": "你是一名严谨的银行函证审计专家。"},
             {"role": "user", "content": prompt}
         ],
-        temperature=0.2
+        temperature=0.1
     )
 
     return response.choices[0].message.content
-
 
 st.set_page_config(page_title="智能银行询证函生成助手", layout="centered")
 
@@ -202,16 +255,6 @@ if not valid:
 st.success(f"Excel校验通过，共读取 {len(df)} 条账户记录。")
 st.dataframe(df.head(10), use_container_width=True)
 
-st.subheader("账户AI审计建议")
-
-account_data = df.head(20).to_json(orient="records", force_ascii=False)
-
-risk_data = "当前仅完成基础字段校验，未发现明显缺失字段。"
-
-if st.button("生成AI审计建议"):
-    with st.spinner("DeepSeek 正在分析账户信息..."):
-        ai_advice = call_deepseek_ai(account_data, risk_data)
-        st.markdown(ai_advice)
 
 st.subheader("第三步：预览询证函")
 
@@ -222,6 +265,21 @@ preview_index = st.selectbox(
 )
 
 preview_row = df.iloc[preview_index]
+
+st.subheader("第四步：AI审计建议")
+
+account_info = f"""
+账户名称：{clean_value(preview_row["账户名称"])}
+开户行：{clean_value(preview_row["开户行"])}
+账户类型：{clean_value(preview_row["账户类型"])}
+币种：{clean_value(preview_row["币种"])}
+余额：{clean_value(preview_row["余额"])}
+"""
+
+if st.button("生成AI审计建议"):
+    with st.spinner("DeepSeek 正在结合审计规则分析账户信息..."):
+        ai_advice = call_deepseek_ai(account_info)
+        st.markdown(ai_advice)
 
 preview_context = {
     "编号": f"{audit_year.replace('年', '')}-{preview_index + 1:03d}",
